@@ -33,4 +33,9 @@ services:
       # For example, 3.20
       - key: ALPINE_VERSION
         sync: false
+      # Optional. Sentry crons "Direct ingest URL" for this job.
+      # Format: https://o<org>.ingest.sentry.io/api/<project>/cron/<slug>/<key>/
+      # Leave unset to disable cron monitoring.
+      - key: SENTRY_CRONS_URL
+        sync: false
 

@@ -4,6 +4,34 @@ set -o errexit -o nounset -o pipefail
 
 export AWS_PAGER=""
 
+# Sentry cron monitoring (optional). Set SENTRY_CRONS_URL to the per-monitor
+# ingest URL from Sentry (Settings -> Crons -> <monitor> -> "Direct ingest URL").
+# Format: https://o<org>.ingest.sentry.io/api/<project>/cron/<slug>/<key>/
+# All check-ins are best-effort: a Sentry outage must not break the backup.
+SENTRY_CRONS_URL="${SENTRY_CRONS_URL:-}"
+SENTRY_CHECKIN_ID=""
+
+sentry_checkin_start() {
+    [ -z "$SENTRY_CRONS_URL" ] && return 0
+    SENTRY_CHECKIN_ID=$(
+        curl -sS --max-time 5 -X POST "$SENTRY_CRONS_URL" \
+            -H 'Content-Type: application/json' \
+            -d '{"status":"in_progress"}' 2>/dev/null \
+        | sed -n 's/.*"id":"\([^"]*\)".*/\1/p'
+    ) || true
+}
+
+sentry_checkin_finish() {
+    [ -z "$SENTRY_CRONS_URL" ] && return 0
+    [ -z "$SENTRY_CHECKIN_ID" ] && return 0
+    local status="$1"
+    curl -sS --max-time 5 -X PUT "${SENTRY_CRONS_URL}${SENTRY_CHECKIN_ID}/" \
+        -H 'Content-Type: application/json' \
+        -d "{\"status\":\"$status\"}" >/dev/null 2>&1 || true
+}
+
+trap 'sentry_checkin_finish error' ERR
+
 s3() {
     aws s3 --region "$AWS_REGION" "$@"
 }
@@ -56,10 +84,12 @@ upload_to_bucket() {
 }
 
 main() {
+    sentry_checkin_start
     ensure_bucket_exists
     echo "Taking backup and uploading it to S3..."
     pg_dump_database | gzip | upload_to_bucket
     echo "Done."
+    sentry_checkin_finish ok
 }
 
 main
